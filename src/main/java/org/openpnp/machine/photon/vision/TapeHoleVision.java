@@ -1,6 +1,7 @@
 package org.openpnp.machine.photon.vision;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -8,14 +9,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
+import javax.imageio.ImageIO;
+
 import org.apache.commons.io.IOUtils;
 import org.openpnp.machine.photon.PhotonFeeder;
 import org.openpnp.machine.photon.exceptions.TapeHolesNotFoundException;
+import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.model.Point;
 import org.openpnp.spi.Camera;
+import org.openpnp.util.LogUtils;
 import org.openpnp.util.VisionUtils;
 import org.openpnp.vision.pipeline.CvPipeline;
 import org.openpnp.vision.pipeline.CvStage;
@@ -87,6 +92,10 @@ public final class TapeHoleVision {
             Logger.debug("Photon feeder tape vision: {}", measurement);
             return measurement;
         }
+        catch (TapeHolesNotFoundException e) {
+            saveFailedImage(pipeline.getLastCapturedImage());
+            throw e;
+        }
         finally {
             if (display != null && pipeline.getLastCapturedImage() != null) {
                 List<CvStage.Result.Circle> used = new ArrayList<>();
@@ -99,6 +108,24 @@ public final class TapeHoleVision {
                         TapeHoleOverlay.draw(pipeline.getLastCapturedImage(), camera, circles, used, measurement),
                         TapeHoleOverlay.describe(measurement));
             }
+        }
+    }
+
+    /**
+     * With debug logging on, keep the picture no holes could be found in, in the same place and
+     * under the same condition as the pipeline's ImageWriteDebug stages.
+     */
+    private static void saveFailedImage(BufferedImage image) {
+        if (image == null || !LogUtils.isDebugEnabled()) {
+            return;
+        }
+        try {
+            File file = Configuration.get().createResourceFile(TapeHoleVision.class, "no_holes_", ".png");
+            ImageIO.write(image, "png", file);
+            Logger.debug("Photon feeder tape vision: no sprocket holes found, image saved as {}", file);
+        }
+        catch (Exception e) {
+            Logger.debug("Photon feeder tape vision: could not save the image: {}", e.getMessage());
         }
     }
 

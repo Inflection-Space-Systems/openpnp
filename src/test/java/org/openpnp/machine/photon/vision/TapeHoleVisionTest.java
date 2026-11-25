@@ -89,11 +89,13 @@ public class TapeHoleVisionTest {
         boolean paper = false;
         boolean embossed = false;
         boolean singleHole = false;
+        boolean fourMillimetrePitch = false;
         StringBuilder failures = new StringBuilder();
         for (Expected e : expected) {
             BufferedImage image = ImageIO.read(TapeHoleVisionTest.class.getResource(FIXTURES + e.file));
             long start = System.nanoTime();
-            TapeHoleLocator.Measurement m = measure(image, 2);
+            int pitch = e.tape.contains("4 mm pitch") ? 4 : 2;
+            TapeHoleLocator.Measurement m = measure(image, pitch);
             long millis = (System.nanoTime() - start) / 1000000;
             System.out.println(String.format("%s [%s]: expected (%+.3f, %+.3f), got %s in %d ms",
                     e.file, e.tape, e.dx, e.dy, m, millis));
@@ -109,15 +111,38 @@ public class TapeHoleVisionTest {
             paper |= e.tape.contains("paper");
             embossed |= e.tape.contains("embossed");
             singleHole |= m.getHoleCount() == 1;
+            fourMillimetrePitch |= pitch == 4;
         }
         assertEquals("", failures.toString());
         assertTrue(paper && embossed, "fixtures must cover paper and embossed tape");
         assertTrue(singleHole, "fixtures must cover a photo with one whole hole in view");
+        assertTrue(fourMillimetrePitch, "fixtures must cover 4 mm pitch tape");
     }
 
     @Test
     public void imageWithoutHolesIsReportedAsNoHolesFound() {
         assertThrows(TapeHolesNotFoundException.class, () -> measure(TapeImages.blank(), 2));
+    }
+
+    @Test
+    public void imageWithoutHolesIsKeptWhenDebugLoggingIsOn() throws Exception {
+        File directory = new File(Configuration.get().getConfigurationDirectory(),
+                TapeHoleVision.class.getCanonicalName());
+        int before = directory.exists() ? directory.list().length : 0;
+        org.pmw.tinylog.Level level = org.pmw.tinylog.Logger.getLevel();
+        try {
+            org.pmw.tinylog.Configurator.currentConfig().level(org.pmw.tinylog.Level.INFO).activate();
+            assertThrows(TapeHolesNotFoundException.class, () -> measure(TapeImages.blank(), 2));
+            assertEquals(before, directory.exists() ? directory.list().length : 0);
+
+            org.pmw.tinylog.Configurator.currentConfig().level(org.pmw.tinylog.Level.DEBUG).activate();
+            assertThrows(TapeHolesNotFoundException.class, () -> measure(TapeImages.blank(), 2));
+            assertEquals(before + 1, directory.list().length);
+            assertTrue(directory.list()[0].startsWith("no_holes_"));
+        }
+        finally {
+            org.pmw.tinylog.Configurator.currentConfig().level(level).activate();
+        }
     }
 
     @Test
