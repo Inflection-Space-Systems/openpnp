@@ -8,9 +8,11 @@ import javax.swing.Action;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 import javax.swing.border.TitledBorder;
 
 import org.jdesktop.beansbinding.AutoBinding;
@@ -18,6 +20,7 @@ import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.jdesktop.beansbinding.BeanProperty;
 import org.jdesktop.beansbinding.Bindings;
 import org.openpnp.Translations;
+import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.components.LocationButtonsPanel;
 import org.openpnp.gui.support.AbstractConfigurationWizard;
 import org.openpnp.gui.support.DoubleConverter;
@@ -27,9 +30,15 @@ import org.openpnp.gui.support.LengthConverter;
 import org.openpnp.gui.support.MutableLocationProxy;
 import org.openpnp.gui.support.PartsComboBoxModel;
 import org.openpnp.machine.photon.PhotonFeeder;
+import org.openpnp.machine.photon.vision.TapeHoleLocator;
+import org.openpnp.machine.photon.vision.TapeHoleVision;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.Part;
+import org.openpnp.spi.Camera;
 import org.openpnp.util.UiUtils;
+import org.openpnp.vision.pipeline.CvPipeline;
+import org.openpnp.vision.pipeline.ui.CvPipelineEditor;
+import org.openpnp.vision.pipeline.ui.CvPipelineEditorDialog;
 
 import com.jgoodies.forms.layout.ColumnSpec;
 import com.jgoodies.forms.layout.FormLayout;
@@ -57,6 +66,11 @@ public class FeederConfigurationWizard extends AbstractConfigurationWizard {
 	private final JLabel moveWhileFeedingLabel;
 	private final JCheckBox moveWhileFeedingCheckBox;
 	private final LocationButtonsPanel slotLocationPanel;
+	private final JComboBox<PhotonFeeder.VisionCalibration> visionCalibrationCb;
+	private final JTextField visionIntervalTf;
+	private final JTextField visionMaxCorrectionTf;
+	private final JCheckBox visionStopCheckBox;
+	private final JLabel visionResultValue;
 
 	/**
 	 * Create the panel.
@@ -247,6 +261,84 @@ public class FeederConfigurationWizard extends AbstractConfigurationWizard {
 		moveWhileFeedingCheckBox = new JCheckBox();
 		locationPanel.add(moveWhileFeedingCheckBox, "4, 8, left, default"); //$NON-NLS-1$
 		moveWhileFeedingCheckBox.setToolTipText(Translations.getString("FeederConfigurationWizard.LocationPanel.moveWhileFeedingLabel.toolTipText"));
+
+		JPanel visionPanel = new JPanel();
+		visionPanel.setBorder(new TitledBorder(null, Translations.getString("FeederConfigurationWizard.VisionPanel.Border.title"), TitledBorder.LEADING, TitledBorder.TOP, null, null)); //$NON-NLS-1$
+		contentPanel.add(visionPanel);
+		visionPanel.setLayout(new FormLayout(new ColumnSpec[] {
+				FormSpecs.RELATED_GAP_COLSPEC,
+				FormSpecs.DEFAULT_COLSPEC,
+				FormSpecs.RELATED_GAP_COLSPEC,
+				ColumnSpec.decode("max(70dlu;pref)"), //$NON-NLS-1$
+				FormSpecs.RELATED_GAP_COLSPEC,
+				FormSpecs.DEFAULT_COLSPEC,
+				FormSpecs.RELATED_GAP_COLSPEC,
+				FormSpecs.DEFAULT_COLSPEC,
+				FormSpecs.RELATED_GAP_COLSPEC,
+				FormSpecs.DEFAULT_COLSPEC,
+				FormSpecs.RELATED_GAP_COLSPEC,},
+			new RowSpec[] {
+				FormSpecs.RELATED_GAP_ROWSPEC,
+				FormSpecs.DEFAULT_ROWSPEC,
+				FormSpecs.RELATED_GAP_ROWSPEC,
+				FormSpecs.DEFAULT_ROWSPEC,
+				FormSpecs.RELATED_GAP_ROWSPEC,
+				FormSpecs.DEFAULT_ROWSPEC,
+				FormSpecs.RELATED_GAP_ROWSPEC,
+				FormSpecs.DEFAULT_ROWSPEC,
+				FormSpecs.RELATED_GAP_ROWSPEC,
+				FormSpecs.DEFAULT_ROWSPEC,
+				FormSpecs.RELATED_GAP_ROWSPEC,}));
+
+		JLabel visionCalibrationLabel = new JLabel(Translations.getString("FeederConfigurationWizard.VisionPanel.visionCalibrationLabel.text")); //$NON-NLS-1$
+		visionCalibrationLabel.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionCalibrationLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionCalibrationLabel, "2, 2, right, default"); //$NON-NLS-1$
+
+		visionCalibrationCb = new JComboBox<>(PhotonFeeder.VisionCalibration.values());
+		visionCalibrationCb.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionCalibrationLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionCalibrationCb, "4, 2, fill, default"); //$NON-NLS-1$
+
+		JLabel visionIntervalLabel = new JLabel(Translations.getString("FeederConfigurationWizard.VisionPanel.visionIntervalLabel.text")); //$NON-NLS-1$
+		visionIntervalLabel.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionIntervalLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionIntervalLabel, "6, 2, right, default"); //$NON-NLS-1$
+
+		visionIntervalTf = new JTextField();
+		visionIntervalTf.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionIntervalLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionIntervalTf, "8, 2, left, default"); //$NON-NLS-1$
+		visionIntervalTf.setColumns(6);
+
+		JLabel visionMaxCorrectionLabel = new JLabel(Translations.getString("FeederConfigurationWizard.VisionPanel.visionMaxCorrectionLabel.text")); //$NON-NLS-1$
+		visionMaxCorrectionLabel.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionMaxCorrectionLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionMaxCorrectionLabel, "2, 4, right, default"); //$NON-NLS-1$
+
+		visionMaxCorrectionTf = new JTextField();
+		visionMaxCorrectionTf.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionMaxCorrectionLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionMaxCorrectionTf, "4, 4, left, default"); //$NON-NLS-1$
+		visionMaxCorrectionTf.setColumns(10);
+
+		JLabel visionStopLabel = new JLabel(Translations.getString("FeederConfigurationWizard.VisionPanel.visionStopLabel.text")); //$NON-NLS-1$
+		visionStopLabel.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionStopLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionStopLabel, "2, 6, right, default"); //$NON-NLS-1$
+
+		visionStopCheckBox = new JCheckBox();
+		visionStopCheckBox.setToolTipText(Translations.getString("FeederConfigurationWizard.VisionPanel.visionStopLabel.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(visionStopCheckBox, "4, 6, left, default"); //$NON-NLS-1$
+
+		JLabel visionResultLabel = new JLabel(Translations.getString("FeederConfigurationWizard.VisionPanel.visionResultLabel.text")); //$NON-NLS-1$
+		visionPanel.add(visionResultLabel, "2, 8, right, default"); //$NON-NLS-1$
+
+		visionResultValue = new JLabel("-"); //$NON-NLS-1$
+		visionPanel.add(visionResultValue, "4, 8, 7, 1, left, default"); //$NON-NLS-1$
+
+		JButton measureButton = new JButton(measureTapeAction);
+		measureButton.setToolTipText(Translations.getString("FeederConfigurationWizard.MeasureTapeAction.toolTipText")); //$NON-NLS-1$
+		visionPanel.add(measureButton, "4, 10, left, default"); //$NON-NLS-1$
+
+		JButton editPipelineButton = new JButton(editPipelineAction);
+		visionPanel.add(editPipelineButton, "6, 10, left, default"); //$NON-NLS-1$
+
+		JButton resetPipelineButton = new JButton(resetPipelineAction);
+		visionPanel.add(resetPipelineButton, "8, 10, left, default"); //$NON-NLS-1$
 	}
 
 	AutoBinding<PhotonFeeder, Object, SlotProxy, Object> binding;
@@ -311,7 +403,57 @@ public class FeederConfigurationWizard extends AbstractConfigurationWizard {
 		bind(AutoBinding.UpdateStrategy.READ_WRITE, offsets, "rotation", rotOffsetTf, "text", doubleConverter); //$NON-NLS-1$ //$NON-NLS-2$
 
 		addWrappedBinding(feeder, "moveWhileFeeding", moveWhileFeedingCheckBox, "selected"); //$NON-NLS-1$ //$NON-NLS-2$
+
+		addWrappedBinding(feeder, "visionCalibration", visionCalibrationCb, "selectedItem"); //$NON-NLS-1$ //$NON-NLS-2$
+		addWrappedBinding(feeder, "visionCalibrationInterval", visionIntervalTf, "text", intConverter); //$NON-NLS-1$ //$NON-NLS-2$
+		addWrappedBinding(feeder, "visionMaxCorrection", visionMaxCorrectionTf, "text", lengthConverter); //$NON-NLS-1$ //$NON-NLS-2$
+		addWrappedBinding(feeder, "visionStopWhenHolesNotFound", visionStopCheckBox, "selected"); //$NON-NLS-1$ //$NON-NLS-2$
+		bind(UpdateStrategy.READ, slotProxy, "enabled", measureTapeAction, "enabled"); //$NON-NLS-1$ //$NON-NLS-2$
 	}
+
+	private final Action measureTapeAction = new AbstractAction(Translations.getString("FeederConfigurationWizard.MeasureTapeAction.Name")) { //$NON-NLS-1$
+		@Override
+		public void actionPerformed(ActionEvent e) {
+			UiUtils.submitUiMachineTask(() -> {
+				Camera camera = Configuration.get().getMachine().getDefaultHead().getDefaultCamera();
+				String text;
+				try {
+					TapeHoleLocator.Measurement measurement = feeder.calibrateVision(camera);
+					text = measurement == null
+							? Translations.getString("FeederConfigurationWizard.VisionPanel.visionResult.noHoles") //$NON-NLS-1$
+							: String.format(Translations.getString("FeederConfigurationWizard.VisionPanel.visionResult.format"), //$NON-NLS-1$
+									measurement.getOffsetX(), measurement.getOffsetY(), measurement.getHoleCount());
+				}
+				catch (Exception exception) {
+					String message = exception.getMessage() == null ? exception.toString() : exception.getMessage();
+					SwingUtilities.invokeLater(() -> visionResultValue.setText(message));
+					throw exception;
+				}
+				SwingUtilities.invokeLater(() -> visionResultValue.setText(text));
+			});
+		}
+	};
+
+	private final Action editPipelineAction = new AbstractAction(Translations.getString("FeederConfigurationWizard.EditPipelineAction.Name")) { //$NON-NLS-1$
+		@Override
+		public void actionPerformed(ActionEvent e) {
+			UiUtils.messageBoxOnException(() -> {
+				Camera camera = Configuration.get().getMachine().getDefaultHead().getDefaultCamera();
+				CvPipeline pipeline = feeder.getVisionPipeline();
+				TapeHoleVision.preparePipeline(pipeline, camera);
+				CvPipelineEditor editor = new CvPipelineEditor(pipeline);
+				JDialog dialog = new CvPipelineEditorDialog(MainFrame.get(), feeder.getName() + " Pipeline", editor); //$NON-NLS-1$
+				dialog.setVisible(true);
+			});
+		}
+	};
+
+	private final Action resetPipelineAction = new AbstractAction(Translations.getString("FeederConfigurationWizard.ResetPipelineAction.Name")) { //$NON-NLS-1$
+		@Override
+		public void actionPerformed(ActionEvent e) {
+			feeder.resetVisionPipeline();
+		}
+	};
 
 	private final Action findSlotAddressAction = new AbstractAction(Translations.getString("FeederConfigurationWizard.FindSlotAddressAction.Name")) { //$NON-NLS-1$
 		@Override
