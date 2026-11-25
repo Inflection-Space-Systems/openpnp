@@ -90,6 +90,7 @@ public class TapeHoleVisionTest {
         boolean embossed = false;
         boolean singleHole = false;
         boolean fourMillimetrePitch = false;
+        boolean clear = false;
         StringBuilder failures = new StringBuilder();
         for (Expected e : expected) {
             BufferedImage image = ImageIO.read(TapeHoleVisionTest.class.getResource(FIXTURES + e.file));
@@ -112,11 +113,13 @@ public class TapeHoleVisionTest {
             embossed |= e.tape.contains("embossed");
             singleHole |= m.getHoleCount() == 1;
             fourMillimetrePitch |= pitch == 4;
+            clear |= e.tape.contains("clear");
         }
         assertEquals("", failures.toString());
         assertTrue(paper && embossed, "fixtures must cover paper and embossed tape");
         assertTrue(singleHole, "fixtures must cover a photo with one whole hole in view");
         assertTrue(fourMillimetrePitch, "fixtures must cover 4 mm pitch tape");
+        assertTrue(clear, "fixtures must cover clear tape");
     }
 
     @Test

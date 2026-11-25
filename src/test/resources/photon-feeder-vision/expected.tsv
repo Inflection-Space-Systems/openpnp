@@ -1,5 +1,7 @@
 # Offsets logged by the Jython prototype (Feeder.AfterFeed hook, HoughCircles + Otsu centroid)
 # for the uncropped PNG originals of these photos, LumenPnP top camera, 24 Nov 2026.
+# The clear tape photo is the exception: the prototype never saw it, and its values were read
+# off the pocket outline in the photo by eye (to about 0.05 mm).
 # file	dx_mm	dy_mm	holes	px_per_mm	tape
 173402.272_slot5_N1.jpg	-0.0062	0.5393	2	92.25	black embossed, SOD-523, 2 mm pitch
 173406.134_slot12_N2.jpg	-0.1412	0.5139	2	92.21	white paper, 0402, 2 mm pitch
@@ -15,3 +17,4 @@
 194752.777_slot6_N1.jpg	0.102	-0.05	3	91.19	white paper, 0603, 4 mm pitch
 194837.617_slot9_N2.jpg	0.154	0.175	2	93.90	black embossed, LED, 4 mm pitch
 195108.703_slot16_N1.jpg	-0.115	0.093	3	91.31	black embossed, LED, 4 mm pitch
+203301.526_slot7_clear.jpg	0.01	-0.03	2		clear embossed, 0805, 4 mm pitch

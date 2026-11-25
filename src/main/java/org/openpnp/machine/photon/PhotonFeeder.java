@@ -90,9 +90,10 @@ public class PhotonFeeder extends ReferenceFeeder {
     @Attribute(required = false)
     protected boolean visionStopWhenHolesNotFound = true;
 
-    /** Null until vision calibration is used or the pipeline is edited: then the default is created. */
+    /** Null unless the pipeline has been edited for this feeder: the default is then used. */
     @Element(required = false)
     protected CvPipeline visionPipeline;
+    private CvPipeline defaultVisionPipeline;
 
     /**
      * Where vision found the pocket, relative to visionOffsetBase. Never saved, and replaced (not
@@ -655,15 +656,35 @@ public class PhotonFeeder extends ReferenceFeeder {
         firePropertyChange("visionStopWhenHolesNotFound", oldValue, visionStopWhenHolesNotFound);
     }
 
+    /**
+     * The pipeline measurements are made with: the feeder's own if it has been edited, otherwise
+     * the default. The default is not saved with the feeder, so that a feeder nobody has tuned
+     * follows improvements to it.
+     */
     public CvPipeline getVisionPipeline() {
+        if (visionPipeline != null) {
+            return visionPipeline;
+        }
+        if (defaultVisionPipeline == null) {
+            defaultVisionPipeline = TapeHoleVision.createDefaultPipeline();
+        }
+        return defaultVisionPipeline;
+    }
+
+    /**
+     * The feeder's own pipeline, for editing. From here on it is saved with the feeder.
+     */
+    public CvPipeline getVisionPipelineForEditing() {
         if (visionPipeline == null) {
             visionPipeline = TapeHoleVision.createDefaultPipeline();
         }
         return visionPipeline;
     }
 
+    /** Go back to the default pipeline. */
     public void resetVisionPipeline() {
-        visionPipeline = TapeHoleVision.createDefaultPipeline();
+        visionPipeline = null;
+        defaultVisionPipeline = null;
     }
 
     public void feedOneMm() throws Exception {

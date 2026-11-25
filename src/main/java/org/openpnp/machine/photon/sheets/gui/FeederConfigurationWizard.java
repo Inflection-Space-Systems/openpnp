@@ -439,7 +439,7 @@ public class FeederConfigurationWizard extends AbstractConfigurationWizard {
 		public void actionPerformed(ActionEvent e) {
 			UiUtils.messageBoxOnException(() -> {
 				Camera camera = Configuration.get().getMachine().getDefaultHead().getDefaultCamera();
-				CvPipeline pipeline = feeder.getVisionPipeline();
+				CvPipeline pipeline = feeder.getVisionPipelineForEditing();
 				TapeHoleVision.preparePipeline(pipeline, camera);
 				CvPipelineEditor editor = new CvPipelineEditor(pipeline);
 				JDialog dialog = new CvPipelineEditorDialog(MainFrame.get(), feeder.getName() + " Pipeline", editor); //$NON-NLS-1$

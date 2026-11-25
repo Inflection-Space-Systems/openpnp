@@ -670,5 +670,15 @@ public class PhotonFeederVisionCalibrationTest {
         assertTrue(xml.contains("vision-calibration-interval=\"7\""), xml);
         // The measured correction is never part of the saved configuration.
         assertFalse(xml.contains("vision-offset"), xml);
+        // Nor is the default pipeline, only one that has been edited for this feeder.
+        assertFalse(xml.contains("vision-pipeline"), xml);
+        feeder.getVisionPipelineForEditing();
+        StringWriter edited = new StringWriter();
+        serializer.write(feeder, edited);
+        assertTrue(edited.toString().contains("vision-pipeline"), edited.toString());
+        feeder.resetVisionPipeline();
+        StringWriter reset = new StringWriter();
+        serializer.write(feeder, reset);
+        assertFalse(reset.toString().contains("vision-pipeline"), reset.toString());
     }
 }
