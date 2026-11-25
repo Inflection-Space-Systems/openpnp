@@ -1,39 +1,52 @@
 package org.openpnp.machine.photon;
 
 import org.openpnp.ConfigurationListener;
+import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.support.Wizard;
 import org.openpnp.machine.photon.exceptions.FeedFailureException;
 import org.openpnp.machine.photon.exceptions.FeederHasNoLocationOffsetException;
 import org.openpnp.machine.photon.exceptions.NoSlotAddressException;
+import org.openpnp.machine.photon.exceptions.TapeHolesNotFoundException;
 import org.openpnp.machine.photon.exceptions.UnconfiguredSlotException;
+import org.openpnp.machine.photon.exceptions.VisionCorrectionTooLargeException;
 import org.openpnp.machine.photon.protocol.ErrorTypes;
 import org.openpnp.machine.photon.protocol.PhotonBus;
 import org.openpnp.machine.photon.protocol.PhotonBusInterface;
 import org.openpnp.machine.photon.protocol.commands.*;
 import org.openpnp.machine.photon.sheets.FeederPropertySheet;
 import org.openpnp.machine.photon.sheets.GlobalConfigPropertySheet;
+import org.openpnp.machine.photon.vision.TapeHoleLocator;
+import org.openpnp.machine.photon.vision.TapeHoleVision;
 import org.openpnp.machine.reference.ReferenceActuator;
 import org.openpnp.machine.reference.ReferenceFeeder;
 import org.openpnp.machine.reference.driver.GcodeDriver;
 import org.openpnp.model.Configuration;
+import org.openpnp.model.Length;
+import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.model.Point;
 import org.openpnp.model.Solutions;
 import org.openpnp.spi.*;
 import org.openpnp.util.MovableUtils;
+import org.openpnp.vision.pipeline.CvPipeline;
 import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 
 import javax.swing.*;
 
+import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class PhotonFeeder extends ReferenceFeeder {
     public static final String ACTUATOR_DATA_NAME = "PhotonFeederData";
+    /** How long the camera view shows what vision calibration found. */
+    static final long VISION_RESULT_DISPLAY_MILLISECONDS = 1500;
     PhotonProperties photonProperties;
 
     @Attribute(required = false)
@@ -53,6 +66,49 @@ public class PhotonFeeder extends ReferenceFeeder {
 
     @Attribute(required = false)
     protected boolean moveWhileFeeding = true;
+
+    /**
+     * When the tape's sprocket holes are looked at to correct the pick location. The tape in a
+     * Photon feeder is positioned by the feeder alone, so without this the pick location is the
+     * slot location plus a fixed offset however far the tape has drifted.
+     */
+    public enum VisionCalibration {
+        Off,
+        EveryFeed,
+        EveryNFeeds,
+        AfterFailedPick
+    }
+
+    @Attribute(required = false)
+    protected VisionCalibration visionCalibration = VisionCalibration.Off;
+
+    @Attribute(required = false)
+    protected int visionCalibrationInterval = 10;
+
+    @Element(required = false)
+    protected Length visionMaxCorrection = new Length(0.75, LengthUnit.Millimeters);
+
+    @Attribute(required = false)
+    protected boolean visionStopWhenHolesNotFound = true;
+
+    /** Null unless the pipeline has been edited for this feeder: the default is then used. */
+    @Element(required = false)
+    protected CvPipeline visionPipeline;
+    private CvPipeline defaultVisionPipeline;
+
+    /**
+     * Where vision found the pocket, relative to visionOffsetBase. Never saved, and replaced (not
+     * added to) by each measurement, so it cannot accumulate into the configured offset. The
+     * next measurement uses it only to tell which of the tape's pockets is the one to follow.
+     */
+    protected Location visionOffset;
+    /** The uncorrected pick location visionOffset was measured at. A changed slot or offset voids it. */
+    protected Location visionOffsetBase;
+    protected int feedsSinceVisionCalibration = 0;
+    protected int picksSinceFeed = 0;
+    protected boolean pickFailedSinceVisionCalibration = false;
+    /** The tape was advanced but the measurement that should follow has not succeeded yet. */
+    protected boolean visionCalibrationPending = false;
 
     public PhotonFeeder() {
         Configuration.get().addListener(new ConfigurationListener.Adapter() {
@@ -86,6 +142,19 @@ public class PhotonFeeder extends ReferenceFeeder {
 
     @Override
     public Location getPickLocation() throws Exception {
+        Location location = getUncorrectedPickLocation();
+        Location correction = getVisionOffset();
+        if (correction != null) {
+            location = location.add(correction);
+        }
+        return location;
+    }
+
+    /**
+     * The pick location as configured: slot location plus offset, without any vision correction.
+     */
+    public Location getUncorrectedPickLocation() throws NoSlotAddressException,
+            UnconfiguredSlotException, FeederHasNoLocationOffsetException {
         verifyFeederLocationIsFullyConfigured();
 
         return offset.offsetWithRotationFrom(getSlot().getLocation());
@@ -224,6 +293,8 @@ public class PhotonFeeder extends ReferenceFeeder {
             otherFeeder.setSlotAddress(response.fromAddress);
         } else {
             initialized = true;
+            // The feeder may have been taken out and reloaded: what was measured before is void.
+            resetVisionCalibration();
         }
     }
 
@@ -263,6 +334,14 @@ public class PhotonFeeder extends ReferenceFeeder {
     }
 
     private void feed(Nozzle nozzle, int distance_mm) throws Exception {
+        feed(nozzle, distance_mm, false);
+    }
+
+    /**
+     * @param cameraOverPickLocation while the tape moves, bring the camera rather than the nozzle
+     *        over the pick location, ready to look at the tape as soon as it stops.
+     */
+    private void feed(Nozzle nozzle, int distance_mm, boolean cameraOverPickLocation) throws Exception {
         for (int i = 0; i <= photonProperties.getFeederCommunicationMaxRetry(); i++) {
             findSlotAddressIfNeeded();
             initializeIfNeeded();
@@ -295,7 +374,12 @@ public class PhotonFeeder extends ReferenceFeeder {
                 Thread.sleep(50); // MAGIC: this feels like a good number, there is no particular reason it is this way.
 
                 if (j == 0 && nozzle != null && Configuration.get().getMachine().isHomed() && getMoveWhileFeeding()) {
-                    MovableUtils.moveToLocationAtSafeZ(nozzle, getPickLocation().deriveLengths(null, null, nozzle.getEffectiveSafeZ(), null));
+                    if (cameraOverPickLocation) {
+                        moveCameraTo(nozzle.getHead().getDefaultCamera(), getUncorrectedPickLocation());
+                    }
+                    else {
+                        MovableUtils.moveToLocationAtSafeZ(nozzle, getPickLocation().deriveLengths(null, null, nozzle.getEffectiveSafeZ(), null));
+                    }
                 }
 
                 MoveFeedStatus moveFeedStatus = new MoveFeedStatus(slotAddress);
@@ -325,16 +409,283 @@ public class PhotonFeeder extends ReferenceFeeder {
             break;
         case SkipNext:
             setFeedOptions(FeedOptions.Normal);
+            // The part that was put back is picked again: that is not a retry of a failed pick.
+            picksSinceFeed = 0;
             return;
         case Disable:
             return;
         }
 
-        feed(nozzle, partPitch);
+        if (nozzle == null) {
+            // A feed by hand. The tape moves whatever happened before, and what was measured
+            // no longer describes the pocket now at the pick location.
+            feed(null, partPitch);
+            resetVisionCalibration();
+            return;
+        }
+
+        if (!visionCalibrationPending) {
+            feed(nozzle, partPitch, isVisionCalibrationDue(feedsSinceVisionCalibration + 1));
+            feedsSinceVisionCalibration++;
+            picksSinceFeed = 0;
+        }
+        // Otherwise the last call advanced the tape and then failed to measure it. The job
+        // processor retries a failed feed: only the measurement is repeated, not the advance,
+        // so no parts are skipped.
+
+        // Decided after the advance: finding the feeder re-inserted voids the correction.
+        if (isVisionCalibrationDue(feedsSinceVisionCalibration)) {
+            visionCalibrationPending = true;
+            calibrateVision(nozzle.getHead().getDefaultCamera());
+            visionCalibrationPending = false;
+        }
+    }
+
+    @Override
+    public void postPick(Nozzle nozzle) throws Exception {
+        super.postPick(nozzle);
+        if (visionCalibration != VisionCalibration.AfterFailedPick) {
+            return;
+        }
+        picksSinceFeed++;
+        if (picksSinceFeed > 1) {
+            // A second pick from the same pocket: the job processor is retrying a failed pick.
+            pickFailedSinceVisionCalibration = true;
+        }
+        else if (nozzle != null && nozzle.isPartOnEnabled(Nozzle.PartOnStep.AfterPick)) {
+            try {
+                if (!nozzle.isPartOn()) {
+                    pickFailedSinceVisionCalibration = true;
+                }
+            }
+            catch (Exception e) {
+                // The job processor makes the same check next and reports what is wrong.
+                Logger.warn("Feeder {}: part-on check after pick failed: {}", getName(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * @param feeds number of feeds since the last measurement, counting the one in hand.
+     */
+    private boolean isVisionCalibrationDue(int feeds) {
+        if (visionCalibrationPending) {
+            return true;
+        }
+        switch (visionCalibration) {
+        case EveryFeed:
+            return true;
+        case EveryNFeeds:
+            return getVisionOffset() == null || feeds >= visionCalibrationInterval;
+        case AfterFailedPick:
+            return pickFailedSinceVisionCalibration;
+        default:
+            return false;
+        }
+    }
+
+    /**
+     * Look at the tape with the camera and set the correction that getPickLocation() applies from
+     * now on. Moves the camera over the configured pick location if it is not already there.
+     * Does not feed, and does not count as the measurement a feed in progress is waiting for.
+     *
+     * @return what was measured, or null if no sprocket holes were found and the feeder is set
+     *         to carry on without them.
+     * @throws TapeHolesNotFoundException if no sprocket holes were found and the feeder is set to
+     *         stop.
+     * @throws VisionCorrectionTooLargeException if the pocket is further from the configured pick
+     *         location than the maximum correction. No correction is applied in that case.
+     */
+    public TapeHoleLocator.Measurement calibrateVision(Camera camera) throws Exception {
+        Location base = getUncorrectedPickLocation();
+        moveCameraTo(camera, base);
+
+        // The tape only moves by whole pitches between measurements, so the pocket to pick is
+        // the one nearest the last correction: it is followed as it drifts, even past the
+        // point where a neighbouring pocket is nearer to the configured location.
+        Location last = getVisionOffset();
+        Point expected = last == null ? null
+                : new Point(last.getLengthX().convertToUnits(LengthUnit.Millimeters).getValue(),
+                        last.getLengthY().convertToUnits(LengthUnit.Millimeters).getValue());
+
+        TapeHoleLocator.Measurement measurement;
+        try {
+            measurement = measureTape(camera, expected);
+        }
+        catch (TapeHolesNotFoundException e) {
+            if (visionStopWhenHolesNotFound) {
+                throw new TapeHolesNotFoundException(String.format(
+                        "Feeder %s: %s Is the tape loaded, and is the pick location within reach of the sprocket holes?",
+                        getName(), e.getMessage()));
+            }
+            Logger.warn("Feeder {}: {} Picking with {}.", getName(), e.getMessage(),
+                    getVisionOffset() == null ? "no correction" : "the previous correction");
+            return null;
+        }
+
+        double limit = visionMaxCorrection.convertToUnits(LengthUnit.Millimeters).getValue();
+        if (measurement.getDistance() > limit) {
+            setVisionOffset(null, null);
+            throw new VisionCorrectionTooLargeException(String.format(
+                    "Feeder %s: the pocket is %.2f mm from the configured pick location (X %+.2f, Y %+.2f), "
+                    + "more than the maximum correction of %.2f mm. "
+                    + "The tape may have slipped, or the feeder's part offset needs setting again.",
+                    getName(), measurement.getDistance(), measurement.getOffsetX(),
+                    measurement.getOffsetY(), limit));
+        }
+
+        setVisionOffset(new Location(LengthUnit.Millimeters, measurement.getOffsetX(),
+                measurement.getOffsetY(), 0, 0), base);
+        feedsSinceVisionCalibration = 0;
+        pickFailedSinceVisionCalibration = false;
+        return measurement;
+    }
+
+    protected void moveCameraTo(Camera camera, Location location) throws Exception {
+        MovableUtils.moveToLocationAtSafeZ(camera, location);
+    }
+
+    private TapeHoleLocator.Measurement measureTape(Camera camera, Point expected) throws Exception {
+        BiConsumer<BufferedImage, String> display = (image, text) -> showVisionResult(camera, image, text);
+        try (CvPipeline pipeline = getVisionPipeline()) {
+            try {
+                return TapeHoleVision.measure(camera, pipeline, partPitch, expected, display);
+            }
+            catch (TapeHolesNotFoundException e) {
+                // One more look: a frame caught before the tape or the head had settled.
+                return TapeHoleVision.measure(camera, pipeline, partPitch, expected, display);
+            }
+        }
+    }
+
+    /**
+     * Show what vision found in the camera view for a moment. Does nothing without a GUI.
+     */
+    protected void showVisionResult(Camera camera, BufferedImage image, String text) {
+        try {
+            if (MainFrame.get() != null) {
+                MainFrame.get().getCameraViews().getCameraView(camera)
+                        .showFilteredImage(image, text, VISION_RESULT_DISPLAY_MILLISECONDS);
+            }
+        }
+        catch (Exception e) {
+            // Showing the result is a convenience: it must never fail a feed.
+            Logger.debug("Feeder {}: could not show the vision result: {}", getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * The correction vision last measured, or null if there is none in force.
+     */
+    public Location getVisionOffset() {
+        if (visionCalibration == VisionCalibration.Off || visionOffset == null || offset == null
+                || slotAddress == null) {
+            return null;
+        }
+        Location slotLocation = getSlot().getLocation();
+        if (slotLocation == null
+                || !offset.offsetWithRotationFrom(slotLocation).equals(visionOffsetBase)) {
+            // The slot or the offset was changed after the measurement.
+            return null;
+        }
+        return visionOffset;
+    }
+
+    private void setVisionOffset(Location visionOffset, Location base) {
+        Object oldValue = this.visionOffset;
+        this.visionOffset = visionOffset;
+        this.visionOffsetBase = base;
+        firePropertyChange("visionOffset", oldValue, visionOffset);
+    }
+
+    public void resetVisionCalibration() {
+        setVisionOffset(null, null);
+        feedsSinceVisionCalibration = 0;
+        picksSinceFeed = 0;
+        pickFailedSinceVisionCalibration = false;
+        visionCalibrationPending = false;
+    }
+
+    public VisionCalibration getVisionCalibration() {
+        return visionCalibration;
+    }
+
+    public void setVisionCalibration(VisionCalibration visionCalibration) {
+        Object oldValue = this.visionCalibration;
+        this.visionCalibration = visionCalibration == null ? VisionCalibration.Off : visionCalibration;
+        if (oldValue != this.visionCalibration) {
+            resetVisionCalibration();
+        }
+        firePropertyChange("visionCalibration", oldValue, this.visionCalibration);
+    }
+
+    public int getVisionCalibrationInterval() {
+        return visionCalibrationInterval;
+    }
+
+    public void setVisionCalibrationInterval(int visionCalibrationInterval) {
+        int oldValue = this.visionCalibrationInterval;
+        this.visionCalibrationInterval = Math.max(1, visionCalibrationInterval);
+        firePropertyChange("visionCalibrationInterval", oldValue, this.visionCalibrationInterval);
+    }
+
+    public Length getVisionMaxCorrection() {
+        return visionMaxCorrection;
+    }
+
+    public void setVisionMaxCorrection(Length visionMaxCorrection) {
+        if (visionMaxCorrection == null || visionMaxCorrection.getValue() <= 0) {
+            throw new IllegalArgumentException("The maximum vision correction must be greater than zero.");
+        }
+        Object oldValue = this.visionMaxCorrection;
+        this.visionMaxCorrection = visionMaxCorrection;
+        firePropertyChange("visionMaxCorrection", oldValue, visionMaxCorrection);
+    }
+
+    public boolean isVisionStopWhenHolesNotFound() {
+        return visionStopWhenHolesNotFound;
+    }
+
+    public void setVisionStopWhenHolesNotFound(boolean visionStopWhenHolesNotFound) {
+        boolean oldValue = this.visionStopWhenHolesNotFound;
+        this.visionStopWhenHolesNotFound = visionStopWhenHolesNotFound;
+        firePropertyChange("visionStopWhenHolesNotFound", oldValue, visionStopWhenHolesNotFound);
+    }
+
+    /**
+     * The pipeline measurements are made with: the feeder's own if it has been edited, otherwise
+     * the default. The default is not saved with the feeder, so that a feeder nobody has tuned
+     * follows improvements to it.
+     */
+    public CvPipeline getVisionPipeline() {
+        if (visionPipeline != null) {
+            return visionPipeline;
+        }
+        if (defaultVisionPipeline == null) {
+            defaultVisionPipeline = TapeHoleVision.createDefaultPipeline();
+        }
+        return defaultVisionPipeline;
+    }
+
+    /**
+     * The feeder's own pipeline, for editing. From here on it is saved with the feeder.
+     */
+    public CvPipeline getVisionPipelineForEditing() {
+        if (visionPipeline == null) {
+            visionPipeline = TapeHoleVision.createDefaultPipeline();
+        }
+        return visionPipeline;
+    }
+
+    /** Go back to the default pipeline. */
+    public void resetVisionPipeline() {
+        visionPipeline = null;
+        defaultVisionPipeline = null;
     }
 
     public void feedOneMm() throws Exception {
         feed(null, 1);
+        resetVisionCalibration();
     }
 
     @Override
@@ -478,6 +829,10 @@ public class PhotonFeeder extends ReferenceFeeder {
     }
 
     public void setPartPitch(int partPitch) {
+        if (partPitch != this.partPitch) {
+            // The pockets are somewhere else relative to the sprocket holes.
+            resetVisionCalibration();
+        }
         this.partPitch = partPitch;
     }
 

@@ -1,0 +1,20 @@
+# Offsets logged by the Jython prototype (Feeder.AfterFeed hook, HoughCircles + Otsu centroid)
+# for the uncropped PNG originals of these photos, LumenPnP top camera, 24 Nov 2026.
+# The clear tape photo is the exception: the prototype never saw it, and its values were read
+# off the pocket outline in the photo by eye (to about 0.05 mm).
+# file	dx_mm	dy_mm	holes	px_per_mm	tape
+173402.272_slot5_N1.jpg	-0.0062	0.5393	2	92.25	black embossed, SOD-523, 2 mm pitch
+173406.134_slot12_N2.jpg	-0.1412	0.5139	2	92.21	white paper, 0402, 2 mm pitch
+173706.831_slot2_N1.jpg	-0.0546	0.9599	3	93.33	white paper, 0402, 2 mm pitch
+174340.541_slot5_N2.jpg	0.0242	-0.0518	3	90.69	black embossed, SOD-523, 2 mm pitch
+174556.611_slot2_N1.jpg	0.1041	-0.7049	3	93.27	white paper, 0402, 2 mm pitch
+175341.178_slot1_N1.jpg	-0.3462	0.3837	3	89.41	white paper, 0402, 2 mm pitch
+175345.823_slot4_N2.jpg	-0.2325	0.5007	3	91.54	white paper, 0402, 2 mm pitch
+180142.491_slot14_N1.jpg	-0.0130	-0.0023	4	90.50	white paper, 0402, 2 mm pitch
+180518.836_slot5_N2.jpg	0.1892	-0.0681	3	91.10	black embossed, SOD-523, 2 mm pitch
+180605.383_slot1_N2.jpg	0.1805	-0.7791	3	92.58	white paper, 0402, 2 mm pitch
+174738.625_slot2_N2.jpg	-0.0255	0.0047	3	90.94	white paper, 0402, 2 mm pitch, one whole hole in view
+194752.777_slot6_N1.jpg	0.102	-0.05	3	91.19	white paper, 0603, 4 mm pitch
+194837.617_slot9_N2.jpg	0.154	0.175	2	93.90	black embossed, LED, 4 mm pitch
+195108.703_slot16_N1.jpg	-0.115	0.093	3	91.31	black embossed, LED, 4 mm pitch
+203301.526_slot7_clear.jpg	0.01	-0.03	2		clear embossed, 0805, 4 mm pitch
