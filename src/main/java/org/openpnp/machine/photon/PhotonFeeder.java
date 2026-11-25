@@ -1,6 +1,7 @@
 package org.openpnp.machine.photon;
 
 import org.openpnp.ConfigurationListener;
+import org.openpnp.gui.MainFrame;
 import org.openpnp.gui.support.Wizard;
 import org.openpnp.machine.photon.exceptions.FeedFailureException;
 import org.openpnp.machine.photon.exceptions.FeederHasNoLocationOffsetException;
@@ -33,14 +34,18 @@ import org.simpleframework.xml.Element;
 
 import javax.swing.*;
 
+import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class PhotonFeeder extends ReferenceFeeder {
     public static final String ACTUATOR_DATA_NAME = "PhotonFeederData";
+    /** How long the camera view shows what vision calibration found. */
+    static final long VISION_RESULT_DISPLAY_MILLISECONDS = 1500;
     PhotonProperties photonProperties;
 
     @Attribute(required = false)
@@ -544,14 +549,31 @@ public class PhotonFeeder extends ReferenceFeeder {
     }
 
     private TapeHoleLocator.Measurement measureTape(Camera camera) throws Exception {
+        BiConsumer<BufferedImage, String> display = (image, text) -> showVisionResult(camera, image, text);
         try (CvPipeline pipeline = getVisionPipeline()) {
             try {
-                return TapeHoleVision.measure(camera, pipeline, partPitch);
+                return TapeHoleVision.measure(camera, pipeline, partPitch, display);
             }
             catch (TapeHolesNotFoundException e) {
                 // One more look: a frame caught before the tape or the head had settled.
-                return TapeHoleVision.measure(camera, pipeline, partPitch);
+                return TapeHoleVision.measure(camera, pipeline, partPitch, display);
             }
+        }
+    }
+
+    /**
+     * Show what vision found in the camera view for a moment. Does nothing without a GUI.
+     */
+    protected void showVisionResult(Camera camera, BufferedImage image, String text) {
+        try {
+            if (MainFrame.get() != null) {
+                MainFrame.get().getCameraViews().getCameraView(camera)
+                        .showFilteredImage(image, text, VISION_RESULT_DISPLAY_MILLISECONDS);
+            }
+        }
+        catch (Exception e) {
+            // Showing the result is a convenience: it must never fail a feed.
+            Logger.debug("Feeder {}: could not show the vision result: {}", getName(), e.getMessage());
         }
     }
 

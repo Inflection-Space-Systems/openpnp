@@ -52,12 +52,14 @@ public final class TapeHoleLocator {
         private final double scale;
         private final double holeToPocket;
         private final double tapeAngle;
+        private final List<Point> holes;
 
-        Measurement(double offsetX, double offsetY, int holeCount, double scale,
+        Measurement(double offsetX, double offsetY, List<Point> holes, double scale,
                 double holeToPocket, double tapeAngle) {
             this.offsetX = offsetX;
             this.offsetY = offsetY;
-            this.holeCount = holeCount;
+            this.holes = Collections.unmodifiableList(new ArrayList<>(holes));
+            this.holeCount = holes.size();
             this.scale = scale;
             this.holeToPocket = holeToPocket;
             this.tapeAngle = tapeAngle;
@@ -88,6 +90,14 @@ public final class TapeHoleLocator {
          */
         public double getScale() {
             return scale;
+        }
+
+        /**
+         * The holes the result is based on: the same objects that were passed to locate(), in
+         * order along the tape.
+         */
+        public List<Point> getHoles() {
+            return holes;
         }
 
         /** The hole row to pocket row distance that was assumed, in mm (3.5 on 8 mm tape). */
@@ -173,7 +183,7 @@ public final class TapeHoleLocator {
         double angle = Math.toDegrees(Math.atan2(uy, ux));
         angle = ((angle % 180) + 180) % 180;
         return new Measurement(along * ux + pocketAcross * nx, along * uy + pocketAcross * ny,
-                row.holes.size(), scale, holeToPocket, angle);
+                row.holes, scale, holeToPocket, angle);
     }
 
     private static final class Row {

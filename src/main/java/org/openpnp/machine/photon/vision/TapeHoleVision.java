@@ -1,8 +1,12 @@
 package org.openpnp.machine.photon.vision;
 
+import java.awt.image.BufferedImage;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.BiConsumer;
 
 import org.apache.commons.io.IOUtils;
 import org.openpnp.machine.photon.PhotonFeeder;
@@ -58,6 +62,15 @@ public final class TapeHoleVision {
      */
     public static TapeHoleLocator.Measurement measure(Camera camera, CvPipeline pipeline,
             int partPitchMm) throws Exception {
+        return measure(camera, pipeline, partPitchMm, null);
+    }
+
+    /**
+     * @param display if not null, given the captured image with what was found drawn on it and
+     *        a line of text, whether or not the measurement succeeds.
+     */
+    public static TapeHoleLocator.Measurement measure(Camera camera, CvPipeline pipeline,
+            int partPitchMm, BiConsumer<BufferedImage, String> display) throws Exception {
         preparePipeline(pipeline, camera);
         pipeline.process();
 
@@ -67,10 +80,26 @@ public final class TapeHoleVision {
                     + VisionUtils.PIPELINE_RESULTS_NAME + "\".");
         }
         List<CvStage.Result.Circle> circles = toCircles(result.getModel());
-        List<Point> holes = toHoleOffsets(camera, circles);
-        TapeHoleLocator.Measurement measurement = TapeHoleLocator.locate(holes, partPitchMm);
-        Logger.debug("Photon feeder tape vision: {}", measurement);
-        return measurement;
+        Map<Point, CvStage.Result.Circle> holes = toHoleOffsets(camera, circles);
+        TapeHoleLocator.Measurement measurement = null;
+        try {
+            measurement = TapeHoleLocator.locate(new ArrayList<>(holes.keySet()), partPitchMm);
+            Logger.debug("Photon feeder tape vision: {}", measurement);
+            return measurement;
+        }
+        finally {
+            if (display != null && pipeline.getLastCapturedImage() != null) {
+                List<CvStage.Result.Circle> used = new ArrayList<>();
+                if (measurement != null) {
+                    for (Point hole : measurement.getHoles()) {
+                        used.add(holes.get(hole));
+                    }
+                }
+                display.accept(
+                        TapeHoleOverlay.draw(pipeline.getLastCapturedImage(), camera, circles, used, measurement),
+                        TapeHoleOverlay.describe(measurement));
+            }
+        }
     }
 
     private static List<CvStage.Result.Circle> toCircles(Object model) {
@@ -93,9 +122,13 @@ public final class TapeHoleVision {
         pipeline.setProperty(HOLE_PROPERTY + ".maxDistance", SEARCH_DISTANCE);
     }
 
-    /** Circle centres in mm relative to the image centre, in machine axes. */
-    private static List<Point> toHoleOffsets(Camera camera, List<CvStage.Result.Circle> circles) {
-        List<Point> holes = new ArrayList<>();
+    /**
+     * Circles of about the right size, keyed by their centre in mm relative to the image centre,
+     * in machine axes, in the order the circles were found.
+     */
+    private static Map<Point, CvStage.Result.Circle> toHoleOffsets(Camera camera,
+            List<CvStage.Result.Circle> circles) {
+        Map<Point, CvStage.Result.Circle> holes = new LinkedHashMap<>();
         for (CvStage.Result.Circle circle : circles) {
             Location size = VisionUtils.getPixelOffsets(camera, circle.diameter, circle.diameter)
                     .convertToUnits(LengthUnit.Millimeters);
@@ -106,7 +139,7 @@ public final class TapeHoleVision {
             }
             Location offset = VisionUtils.getPixelCenterOffsets(camera, circle.x, circle.y)
                     .convertToUnits(LengthUnit.Millimeters);
-            holes.add(new Point(offset.getX(), offset.getY()));
+            holes.put(new Point(offset.getX(), offset.getY()), circle);
         }
         return holes;
     }

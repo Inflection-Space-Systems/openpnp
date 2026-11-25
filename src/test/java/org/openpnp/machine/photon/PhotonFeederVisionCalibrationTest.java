@@ -18,6 +18,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.StringWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Predicate;
 
@@ -68,6 +69,14 @@ public class PhotonFeederVisionCalibrationTest {
         @Override
         protected void moveCameraTo(Camera camera, Location location) {
             cameraMoves.add(location);
+        }
+
+        final List<String> shown = new ArrayList<>();
+
+        @Override
+        protected void showVisionResult(Camera camera, BufferedImage image, String text) {
+            assertNotNull(image);
+            shown.add(text);
         }
     }
 
@@ -552,6 +561,28 @@ public class PhotonFeederVisionCalibrationTest {
         feeder.setVisionMaxCorrection(new Length(1.5, LengthUnit.Millimeters));
 
         assertEquals(before + 1, issuesForFeeder());
+    }
+
+    @Test
+    public void eachMeasurementIsShownInTheCameraView() throws Exception {
+        feeder.setVisionCalibration(VisionCalibration.EveryFeed);
+
+        feeder.feed(nozzle);
+        assertEquals(1, feeder.shown.size());
+        assertTrue(feeder.shown.get(0).startsWith("Pocket at X +0.3"), feeder.shown.get(0));
+
+        show(TapeImages.blank());
+        assertThrows(TapeHolesNotFoundException.class, () -> feeder.feed(nozzle));
+        // Both looks at the empty image are shown.
+        assertEquals(Arrays.asList("No sprocket holes found", "No sprocket holes found"),
+                feeder.shown.subList(1, feeder.shown.size()));
+    }
+
+    @Test
+    public void showingTheResultWithoutAGuiDoesNothing() throws Exception {
+        PhotonFeeder plain = new PhotonFeeder();
+
+        plain.showVisionResult(camera, TapeImages.blank(), "text");
     }
 
     @Test
