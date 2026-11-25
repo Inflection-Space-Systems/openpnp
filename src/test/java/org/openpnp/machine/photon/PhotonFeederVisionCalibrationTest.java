@@ -554,13 +554,78 @@ public class PhotonFeederVisionCalibrationTest {
     }
 
     @Test
-    public void tooLargeAMaximumCorrectionIsReportedAsAnIssue() {
+    public void maximumCorrectionAboveHalfAPitchIsNotAnIssue() {
+        // The pocket is followed from one measurement to the next, so a limit beyond half a
+        // pitch is a legitimate setting.
         feeder.setVisionCalibration(VisionCalibration.EveryFeed);
         long before = issuesForFeeder();
 
         feeder.setVisionMaxCorrection(new Length(1.5, LengthUnit.Millimeters));
 
-        assertEquals(before + 1, issuesForFeeder());
+        assertEquals(before, issuesForFeeder());
+    }
+
+    @Test
+    public void firstMeasurementTakesThePocketNearestTheConfiguredLocation() throws Exception {
+        feeder.setVisionCalibration(VisionCalibration.EveryFeed);
+        feeder.setVisionMaxCorrection(new Length(2, LengthUnit.Millimeters));
+        show(TapeImages.tapeWithPocketAt(0.10, 1.10));
+
+        feeder.feed(nozzle);
+
+        assertPickLocationOffsetBy(0.10, -0.90);
+    }
+
+    @Test
+    public void pocketIsFollowedPastHalfAPitchFromTheLastCorrection() throws Exception {
+        feeder.setVisionCalibration(VisionCalibration.EveryFeed);
+        feeder.setVisionMaxCorrection(new Length(2, LengthUnit.Millimeters));
+        show(TapeImages.tapeWithPocketAt(0.10, 0.90));
+        feeder.feed(nozzle);
+        assertPickLocationOffsetBy(0.10, 0.90);
+
+        // On its own this picture reads -0.90: the pocket 2 mm back is the nearer one.
+        show(TapeImages.tapeWithPocketAt(0.10, 1.10));
+        feeder.feed(nozzle);
+        assertPickLocationOffsetBy(0.10, 1.10);
+
+        show(TapeImages.tapeWithPocketAt(0.10, 1.30));
+        feeder.feed(nozzle);
+        assertPickLocationOffsetBy(0.10, 1.30);
+
+        // The camera still looks from the configured location every time.
+        for (Location move : feeder.cameraMoves) {
+            assertEquals(uncorrected(), move);
+        }
+    }
+
+    @Test
+    public void pocketFollowedBeyondTheLimitFailsTheFeed() throws Exception {
+        feeder.setVisionCalibration(VisionCalibration.EveryFeed);
+        feeder.setVisionMaxCorrection(new Length(1, LengthUnit.Millimeters));
+        show(TapeImages.tapeWithPocketAt(0, 0.90));
+        feeder.feed(nozzle);
+
+        show(TapeImages.tapeWithPocketAt(0, 1.10));
+        VisionCorrectionTooLargeException e =
+                assertThrows(VisionCorrectionTooLargeException.class, () -> feeder.feed(nozzle));
+
+        assertTrue(e.getMessage().contains("1.10 mm"), e.getMessage());
+        assertNull(feeder.getVisionOffset());
+    }
+
+    @Test
+    public void manualFeedStopsThePocketBeingFollowed() throws Exception {
+        feeder.setVisionCalibration(VisionCalibration.EveryFeed);
+        feeder.setVisionMaxCorrection(new Length(2, LengthUnit.Millimeters));
+        show(TapeImages.tapeWithPocketAt(0, 0.90));
+        feeder.feed(nozzle);
+
+        feeder.feed(null);
+        show(TapeImages.tapeWithPocketAt(0, 1.10));
+        feeder.feed(nozzle);
+
+        assertPickLocationOffsetBy(0, -0.90);
     }
 
     @Test

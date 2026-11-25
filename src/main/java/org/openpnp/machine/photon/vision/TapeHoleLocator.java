@@ -118,8 +118,8 @@ public final class TapeHoleLocator {
     }
 
     /**
-     * The spacing of possible pocket positions along the tape. A correction can never be told
-     * apart from one that is a whole number of these steps larger.
+     * The spacing of possible pocket positions along the tape. One picture cannot tell a
+     * correction from one that is a whole number of these steps larger.
      */
     public static double getPocketLattice(int partPitchMm) {
         if (partPitchMm <= 0) {
@@ -128,7 +128,10 @@ public final class TapeHoleLocator {
         return Math.min(partPitchMm, HOLE_PITCH_MM);
     }
 
-    /** The largest correction along the tape that can be measured without ambiguity. */
+    /**
+     * The largest correction along the tape, or change in it from one measurement to the next,
+     * that can be measured without ambiguity.
+     */
     public static double getMaxUnambiguousCorrection(int partPitchMm) {
         return getPocketLattice(partPitchMm) / 2;
     }
@@ -143,6 +146,17 @@ public final class TapeHoleLocator {
      *         conditions given at {@link #rowFromSingleHole(Point)}.
      */
     public static Measurement locate(List<Point> holes, int partPitchMm)
+            throws TapeHolesNotFoundException {
+        return locate(holes, partPitchMm, null);
+    }
+
+    /**
+     * @param expected where the pocket is expected, in mm relative to the measured point, or null
+     *        for the measured point itself. Of all the pockets along the tape the one nearest to
+     *        this is reported. Given the last correction, a pocket that drifts a little with
+     *        every feed is followed past half a pitch instead of being taken for its neighbour.
+     */
+    public static Measurement locate(List<Point> holes, int partPitchMm, Point expected)
             throws TapeHolesNotFoundException {
         double lattice = getPocketLattice(partPitchMm);
         // Pockets on a 4 mm or larger pitch are halfway between holes, smaller ones are in line.
@@ -174,6 +188,10 @@ public final class TapeHoleLocator {
         }
         across /= row.holes.size();
         double along = wrappedMean(alongEstimates, lattice);
+        if (expected != null) {
+            double expectedAlong = expected.x * ux + expected.y * uy;
+            along = expectedAlong + wrap(along - expectedAlong, lattice);
+        }
 
         double steps = Math.max(0, Math.round((Math.abs(across) - HOLE_TO_POCKET_MM) / HOLE_TO_POCKET_STEP_MM));
         double holeToPocket = HOLE_TO_POCKET_MM + steps * HOLE_TO_POCKET_STEP_MM;

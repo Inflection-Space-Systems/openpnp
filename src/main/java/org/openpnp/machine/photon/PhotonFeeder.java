@@ -24,6 +24,7 @@ import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.model.Point;
 import org.openpnp.model.Solutions;
 import org.openpnp.spi.*;
 import org.openpnp.util.MovableUtils;
@@ -97,7 +98,8 @@ public class PhotonFeeder extends ReferenceFeeder {
 
     /**
      * Where vision found the pocket, relative to visionOffsetBase. Never saved, and replaced (not
-     * added to) by each measurement, so it cannot accumulate into the configured offset.
+     * added to) by each measurement, so it cannot accumulate into the configured offset. The
+     * next measurement uses it only to tell which of the tape's pockets is the one to follow.
      */
     protected Location visionOffset;
     /** The uncorrected pick location visionOffset was measured at. A changed slot or offset voids it. */
@@ -212,20 +214,6 @@ public class PhotonFeeder extends ReferenceFeeder {
                     "Select the feeder in the Feeders tab and make sure the slot has a set location",
                     Solutions.Severity.Error,
                     "https://github.com/openpnp/openpnp/wiki/Photon-Feeder#slots-and-feeder-locations"
-            ));
-        }
-
-        double maxUnambiguous = TapeHoleLocator.getMaxUnambiguousCorrection(Math.max(1, partPitch));
-        if (visionCalibration != VisionCalibration.Off
-                && visionMaxCorrection.convertToUnits(LengthUnit.Millimeters).getValue() >= maxUnambiguous) {
-            solutions.add(new Solutions.PlainIssue(
-                    this,
-                    "Feeder vision calibration maximum correction is too large for the part pitch",
-                    String.format("With a part pitch of %d mm a pocket further than %.1f mm from the pick location "
-                            + "cannot be told from its neighbour. Set the maximum correction below that.",
-                            partPitch, maxUnambiguous),
-                    Solutions.Severity.Warning,
-                    "https://github.com/openpnp/openpnp/wiki/Photon-Feeder"
             ));
         }
 
@@ -512,9 +500,17 @@ public class PhotonFeeder extends ReferenceFeeder {
         Location base = getUncorrectedPickLocation();
         moveCameraTo(camera, base);
 
+        // The tape only moves by whole pitches between measurements, so the pocket to pick is
+        // the one nearest the last correction: it is followed as it drifts, even past the
+        // point where a neighbouring pocket is nearer to the configured location.
+        Location last = getVisionOffset();
+        Point expected = last == null ? null
+                : new Point(last.getLengthX().convertToUnits(LengthUnit.Millimeters).getValue(),
+                        last.getLengthY().convertToUnits(LengthUnit.Millimeters).getValue());
+
         TapeHoleLocator.Measurement measurement;
         try {
-            measurement = measureTape(camera);
+            measurement = measureTape(camera, expected);
         }
         catch (TapeHolesNotFoundException e) {
             if (visionStopWhenHolesNotFound) {
@@ -549,15 +545,15 @@ public class PhotonFeeder extends ReferenceFeeder {
         MovableUtils.moveToLocationAtSafeZ(camera, location);
     }
 
-    private TapeHoleLocator.Measurement measureTape(Camera camera) throws Exception {
+    private TapeHoleLocator.Measurement measureTape(Camera camera, Point expected) throws Exception {
         BiConsumer<BufferedImage, String> display = (image, text) -> showVisionResult(camera, image, text);
         try (CvPipeline pipeline = getVisionPipeline()) {
             try {
-                return TapeHoleVision.measure(camera, pipeline, partPitch, display);
+                return TapeHoleVision.measure(camera, pipeline, partPitch, expected, display);
             }
             catch (TapeHolesNotFoundException e) {
                 // One more look: a frame caught before the tape or the head had settled.
-                return TapeHoleVision.measure(camera, pipeline, partPitch, display);
+                return TapeHoleVision.measure(camera, pipeline, partPitch, expected, display);
             }
         }
     }

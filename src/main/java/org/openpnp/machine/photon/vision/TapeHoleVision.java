@@ -67,15 +67,22 @@ public final class TapeHoleVision {
      */
     public static TapeHoleLocator.Measurement measure(Camera camera, CvPipeline pipeline,
             int partPitchMm) throws Exception {
-        return measure(camera, pipeline, partPitchMm, null);
+        return measure(camera, pipeline, partPitchMm, null, (BiConsumer<BufferedImage, String>) null);
+    }
+
+    public static TapeHoleLocator.Measurement measure(Camera camera, CvPipeline pipeline,
+            int partPitchMm, BiConsumer<BufferedImage, String> display) throws Exception {
+        return measure(camera, pipeline, partPitchMm, null, display);
     }
 
     /**
+     * @param expected where the pocket is expected, in mm relative to the image centre, or null
+     *        for the centre itself: see {@link TapeHoleLocator#locate(List, int, Point)}.
      * @param display if not null, given the captured image with what was found drawn on it and
      *        a line of text, whether or not the measurement succeeds.
      */
     public static TapeHoleLocator.Measurement measure(Camera camera, CvPipeline pipeline,
-            int partPitchMm, BiConsumer<BufferedImage, String> display) throws Exception {
+            int partPitchMm, Point expected, BiConsumer<BufferedImage, String> display) throws Exception {
         preparePipeline(pipeline, camera);
         pipeline.process();
 
@@ -88,7 +95,7 @@ public final class TapeHoleVision {
         Map<Point, CvStage.Result.Circle> holes = toHoleOffsets(camera, circles);
         TapeHoleLocator.Measurement measurement = null;
         try {
-            measurement = TapeHoleLocator.locate(new ArrayList<>(holes.keySet()), partPitchMm);
+            measurement = TapeHoleLocator.locate(new ArrayList<>(holes.keySet()), partPitchMm, expected);
             Logger.debug("Photon feeder tape vision: {}", measurement);
             return measurement;
         }

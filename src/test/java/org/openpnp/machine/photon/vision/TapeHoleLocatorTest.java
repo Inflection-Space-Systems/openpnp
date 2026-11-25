@@ -250,4 +250,38 @@ public class TapeHoleLocatorTest {
         assertEquals(1.0, TapeHoleLocator.wrap(1.0, 2), EPS);
         assertEquals(1.0, TapeHoleLocator.wrap(-1.0, 2), EPS);
     }
+
+    @Test
+    public void pocketNearestAnExpectedPositionIsChosen() throws Exception {
+        List<Point> holes = holes(0.1, 0.95, 90, 3.5, 0, -1, 0, 1);
+
+        TapeHoleLocator.Measurement nearCentre = TapeHoleLocator.locate(holes, 2, null);
+        TapeHoleLocator.Measurement nearLast = TapeHoleLocator.locate(holes, 2, new Point(0.1, -0.9));
+        TapeHoleLocator.Measurement farBack = TapeHoleLocator.locate(holes, 2, new Point(0, -2.8));
+
+        assertEquals(0.95, nearCentre.getOffsetY(), EPS);
+        assertEquals(-1.05, nearLast.getOffsetY(), EPS);
+        assertEquals(-3.05, farBack.getOffsetY(), EPS);
+        assertEquals(0.1, nearLast.getOffsetX(), EPS);
+    }
+
+    @Test
+    public void expectedPositionIsFollowedAlongTapeInEitherDirection() throws Exception {
+        // Tape along X, and the same tape turned round: the row direction's sign must not matter.
+        TapeHoleLocator.Measurement along = TapeHoleLocator.locate(
+                holes(0.9, 0, 0, 3.5, 0, -1, 0, 1), 2, new Point(-1.0, 0));
+        TapeHoleLocator.Measurement reversed = TapeHoleLocator.locate(
+                holes(0.9, 0, 180, 3.5, 0, -1, 0, 1), 2, new Point(-1.0, 0));
+
+        assertEquals(-1.1, along.getOffsetX(), EPS);
+        assertEquals(-1.1, reversed.getOffsetX(), EPS);
+    }
+
+    @Test
+    public void expectedPositionOnFourMillimetrePitchTapeMovesInWholePitches() throws Exception {
+        TapeHoleLocator.Measurement m = TapeHoleLocator.locate(
+                holes(0, 1.8, 90, 3.5, 2, -1, 0, 1), 4, new Point(0, -1.9));
+
+        assertEquals(-2.2, m.getOffsetY(), EPS);
+    }
 }
